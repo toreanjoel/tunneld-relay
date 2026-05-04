@@ -35,22 +35,33 @@ Traffic flow between two tunneld nodes:
 - A VPS with a public IPv4 address
 - UDP port 51820 open in the VPS firewall
 
+## Host Setup
+
+Before running the container, the host needs the WireGuard kernel module:
+
+```bash
+sudo bash scripts/setup-host.sh
+```
+
+This loads the module or installs it if missing (Debian/Ubuntu/Alpine supported).
+
 ## Deploying on a VPS
 
 1. Clone this repository onto your VPS
-2. Copy `.env.example` to `.env`:
+2. Run the host setup script (see above)
+3. Copy `.env.example` to `.env`:
    ```
    cp .env.example .env
    ```
-3. Edit `.env` and set at minimum:
+4. Edit `.env` and set at minimum:
    - `RELAY_ENDPOINT` — your VPS public IP and port, e.g. `1.2.3.4:51820`
    - `TOKEN` — a long random string shared with all tunneld nodes
-4. Open UDP port 51820 in your VPS firewall
-5. Start the container:
+5. Open UDP port 51820 in your VPS firewall
+6. Start the container:
    ```
    docker-compose up -d
    ```
-6. Verify the health endpoint:
+7. Verify the health endpoint:
    ```
    curl http://localhost:4000/health
    ```

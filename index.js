@@ -25,7 +25,7 @@ const privateKeyPath = path.join(keyDir, "private.key");
 const publicKeyPath = path.join(keyDir, "public.key");
 
 function exec(cmd) {
-  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
+  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function generateKeypair() {
@@ -50,6 +50,9 @@ const relayKeys = loadOrGenerateKeypair();
 function setupWg() {
   try {
     exec(`ip link del ${WG_INTERFACE} 2>/dev/null; true`);
+    try {
+      exec("modprobe wireguard 2>/dev/null || true");
+    } catch (_) {}
     exec(`ip link add ${WG_INTERFACE} type wireguard`);
     exec(`wg set ${WG_INTERFACE} private-key ${privateKeyPath} listen-port ${WG_PORT}`);
     exec(`ip address add ${WG_ADDRESS} dev ${WG_INTERFACE}`);
@@ -57,7 +60,8 @@ function setupWg() {
     exec(`ip link set ${WG_INTERFACE} up`);
     console.log(`WireGuard ${WG_INTERFACE} up on ${WG_ADDRESS}:${WG_PORT}`);
   } catch (e) {
-    console.error("Failed to bring up wg0:", e.message);
+    console.error(`Failed to bring up ${WG_INTERFACE}:`, e.stderr?.trim() || e.message);
+    console.error("Hint: ensure WireGuard kernel module is loaded (modprobe wireguard)");
     process.exit(1);
   }
 }
@@ -100,7 +104,7 @@ function addWgPeer(pubkey, allowedIps) {
     console.log(`Peer added to ${WG_INTERFACE}: ${pubkey} allowed-ips ${ips}`);
     return true;
   } catch (e) {
-    console.error(`Failed to add peer ${pubkey}:`, e.message);
+    console.error(`Failed to add peer ${pubkey}:`, e.stderr?.trim() || e.message);
     return false;
   }
 }
@@ -111,7 +115,7 @@ function removeWgPeer(pubkey) {
     console.log(`Peer removed from ${WG_INTERFACE}: ${pubkey}`);
     return true;
   } catch (e) {
-    console.error(`Failed to remove peer ${pubkey}:`, e.message);
+    console.error(`Failed to remove peer ${pubkey}:`, e.stderr?.trim() || e.message);
     return false;
   }
 }
