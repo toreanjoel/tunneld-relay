@@ -8,6 +8,7 @@ COPY package.json ./
 RUN npm install --production
 
 COPY . .
+RUN mkdir -p /app/keys
 
 EXPOSE 4000 51820/udp
 
