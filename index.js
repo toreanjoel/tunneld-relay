@@ -48,20 +48,25 @@ function loadOrGenerateKeypair() {
 const relayKeys = loadOrGenerateKeypair();
 
 function setupWg() {
+  const steps = [
+    [`ip link del ${WG_INTERFACE} 2>/dev/null; true`, null],
+    [`ip link add ${WG_INTERFACE} type wireguard`, null],
+    [`ip address add ${WG_ADDRESS} dev ${WG_INTERFACE}`, null],
+    [`ip link set ${WG_INTERFACE} mtu 1280`, null],
+    [`ip link set ${WG_INTERFACE} up`, null],
+  ];
   try {
-    exec(`ip link del ${WG_INTERFACE} 2>/dev/null; true`);
-    try {
-      exec("modprobe wireguard 2>/dev/null || true");
-    } catch (_) {}
-    exec(`ip link add ${WG_INTERFACE} type wireguard`);
-    exec(`wg set ${WG_INTERFACE} private-key ${privateKeyPath} listen-port ${WG_PORT}`);
-    exec(`ip address add ${WG_ADDRESS} dev ${WG_INTERFACE}`);
-    exec(`ip link set ${WG_INTERFACE} mtu 1280`);
-    exec(`ip link set ${WG_INTERFACE} up`);
+    exec(steps[0][0]);
+    exec(steps[1][0]);
+    // Pass private key via stdin to avoid file path permission issues
+    execSync(`wg set ${WG_INTERFACE} private-key /dev/stdin listen-port ${WG_PORT}`,
+      { input: relayKeys.privateKey + "\n", encoding: "utf-8" });
+    exec(steps[2][0]);
+    exec(steps[3][0]);
+    exec(steps[4][0]);
     console.log(`WireGuard ${WG_INTERFACE} up on ${WG_ADDRESS}:${WG_PORT}`);
   } catch (e) {
     console.error(`Failed to bring up ${WG_INTERFACE}:`, e.stderr?.trim() || e.message);
-    console.error("Hint: ensure WireGuard kernel module is loaded (modprobe wireguard)");
     process.exit(1);
   }
 }
