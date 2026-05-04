@@ -51,27 +51,21 @@ function loadOrGenerateKeypair() {
 const relayKeys = loadOrGenerateKeypair();
 
 function setupWg() {
-  const tmpKeyPath = `/tmp/wg-priv-${process.pid}`;
   try {
     try { exec(`ip link del ${WG_INTERFACE}`); } catch (_) {}
     try { exec("modprobe wireguard"); } catch (_) {}
     exec(`ip link add ${WG_INTERFACE} type wireguard`);
 
-    fs.writeFileSync(tmpKeyPath, relayKeys.privateKey + "\n", { mode: 0o600 });
-    try {
-      exec(`wg set ${WG_INTERFACE} private-key ${tmpKeyPath} listen-port ${WG_PORT}`);
-    } finally {
-      try { fs.unlinkSync(tmpKeyPath); } catch (_) {}
-    }
+    // Pass key via shell pipe to avoid fopen file permission issues in Docker
+    const key = relayKeys.privateKey.replace(/"/g, '\\"');
+    execSync(`sh -c 'printf "%s" "${key}" | wg set ${WG_INTERFACE} private-key /dev/stdin listen-port ${WG_PORT}'`);
 
     exec(`ip address add ${WG_ADDRESS} dev ${WG_INTERFACE}`);
     exec(`ip link set ${WG_INTERFACE} mtu 1280`);
     exec(`ip link set ${WG_INTERFACE} up`);
     console.log(`WireGuard ${WG_INTERFACE} up on ${WG_ADDRESS}:${WG_PORT}`);
   } catch (e) {
-    try { fs.unlinkSync(tmpKeyPath); } catch (_) {}
     console.error(`Failed to bring up ${WG_INTERFACE}:`, e.stderr?.trim() || e.message);
-    console.error("Hint: ensure WireGuard kernel module is loaded (modprobe wireguard)");
     process.exit(1);
   }
 }
