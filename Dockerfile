@@ -8,8 +8,10 @@ COPY package.json ./
 RUN npm install --production
 
 COPY . .
-RUN mkdir -p /app/keys && chown -R node:node /app/keys
+RUN mkdir -p /app/keys
 
 EXPOSE 4000 51820/udp
+
+USER root
 
 CMD ["node", "index.js"]
