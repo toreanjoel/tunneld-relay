@@ -7,11 +7,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    sysctls:
-      - net.ipv4.ip_forward=1
+    privileged: true
     volumes:
       - /lib/modules:/lib/modules:ro
     env_file:
