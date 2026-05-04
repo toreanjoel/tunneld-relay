@@ -8,6 +8,8 @@ services:
     restart: unless-stopped
     network_mode: host
     privileged: true
+    security_opt:
+      - apparmor:unconfined
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
