@@ -28,3 +28,17 @@ else
 fi
 
 echo "WireGuard ready."
+
+echo "Opening firewall ports..."
+
+if command -v ufw &> /dev/null; then
+    ufw allow 4000/tcp
+    ufw allow 51820/udp
+    echo "ufw rules added: 4000/tcp, 51820/udp"
+elif command -v iptables &> /dev/null; then
+    iptables -C INPUT -p tcp --dport 4000 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 4000 -j ACCEPT
+    iptables -C INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 51820 -j ACCEPT
+    echo "iptables rules added: 4000/tcp, 51820/udp"
+else
+    echo "Warning: no firewall tool found. Please manually open 4000/tcp and 51820/udp."
+fi
