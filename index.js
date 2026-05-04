@@ -24,14 +24,17 @@ const keyDir = "/app/keys";
 const privateKeyPath = path.join(keyDir, "private.key");
 const publicKeyPath = path.join(keyDir, "public.key");
 
-function exec(cmd) {
-  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+function exec(cmd, opts = {}) {
+  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], ...opts });
 }
 
 function generateKeypair() {
+  if (!fs.existsSync(keyDir)) {
+    fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
+  }
   const priv = exec("wg genkey").trim();
   fs.writeFileSync(privateKeyPath, priv, { mode: 0o600 });
-  const pub = exec(`echo '${priv}' | wg pubkey`).trim();
+  const pub = exec("wg pubkey", { input: priv + "\n" }).trim();
   fs.writeFileSync(publicKeyPath, pub, { mode: 0o600 });
   return { privateKey: priv, publicKey: pub };
 }
@@ -48,25 +51,27 @@ function loadOrGenerateKeypair() {
 const relayKeys = loadOrGenerateKeypair();
 
 function setupWg() {
-  const steps = [
-    [`ip link del ${WG_INTERFACE} 2>/dev/null; true`, null],
-    [`ip link add ${WG_INTERFACE} type wireguard`, null],
-    [`ip address add ${WG_ADDRESS} dev ${WG_INTERFACE}`, null],
-    [`ip link set ${WG_INTERFACE} mtu 1280`, null],
-    [`ip link set ${WG_INTERFACE} up`, null],
-  ];
+  const tmpKeyPath = `/tmp/wg-priv-${process.pid}`;
   try {
-    exec(steps[0][0]);
-    exec(steps[1][0]);
-    // Pass private key via stdin to avoid file path permission issues
-    execSync(`wg set ${WG_INTERFACE} private-key /dev/stdin listen-port ${WG_PORT}`,
-      { input: relayKeys.privateKey + "\n", encoding: "utf-8" });
-    exec(steps[2][0]);
-    exec(steps[3][0]);
-    exec(steps[4][0]);
+    try { exec(`ip link del ${WG_INTERFACE}`); } catch (_) {}
+    try { exec("modprobe wireguard"); } catch (_) {}
+    exec(`ip link add ${WG_INTERFACE} type wireguard`);
+
+    fs.writeFileSync(tmpKeyPath, relayKeys.privateKey + "\n", { mode: 0o600 });
+    try {
+      exec(`wg set ${WG_INTERFACE} private-key ${tmpKeyPath} listen-port ${WG_PORT}`);
+    } finally {
+      try { fs.unlinkSync(tmpKeyPath); } catch (_) {}
+    }
+
+    exec(`ip address add ${WG_ADDRESS} dev ${WG_INTERFACE}`);
+    exec(`ip link set ${WG_INTERFACE} mtu 1280`);
+    exec(`ip link set ${WG_INTERFACE} up`);
     console.log(`WireGuard ${WG_INTERFACE} up on ${WG_ADDRESS}:${WG_PORT}`);
   } catch (e) {
+    try { fs.unlinkSync(tmpKeyPath); } catch (_) {}
     console.error(`Failed to bring up ${WG_INTERFACE}:`, e.stderr?.trim() || e.message);
+    console.error("Hint: ensure WireGuard kernel module is loaded (modprobe wireguard)");
     process.exit(1);
   }
 }

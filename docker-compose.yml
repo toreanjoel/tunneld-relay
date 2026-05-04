@@ -1,21 +1,24 @@
 version: "3.8"
 
 services:
-    tunneld-relay:
-      build:
-        context: .
-        dockerfile: Dockerfile
-      restart: unless-stopped
-      network_mode: host
-      privileged: true
-      volumes:
-        - ./keys:/app/keys
-        - /lib/modules:/lib/modules:ro
-      env_file:
-        - .env
-      environment:
-        - RELAY_ENDPOINT=${RELAY_ENDPOINT}
-        - TOKEN=${TOKEN}
-        - PORT=${PORT:-4000}
-        - HEARTBEAT_TTL=${HEARTBEAT_TTL:-60}
-        - WG_PORT=${WG_PORT:-51820}
+  tunneld-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - ./keys:/app/keys
+    env_file:
+      - .env
+    environment:
+      - RELAY_ENDPOINT=${RELAY_ENDPOINT}
+      - TOKEN=${TOKEN}
+      - PORT=${PORT:-4000}
+      - HEARTBEAT_TTL=${HEARTBEAT_TTL:-60}
+      - WG_PORT=${WG_PORT:-51820}
