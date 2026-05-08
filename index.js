@@ -56,7 +56,6 @@ function setupWg() {
     try { exec("modprobe wireguard"); } catch (_) {}
     exec(`ip link add ${WG_INTERFACE} type wireguard`);
 
-    // Pass key via shell pipe to avoid fopen file permission issues in Docker
     const key = relayKeys.privateKey.replace(/"/g, '\\"');
     execSync(`sh -c 'printf "%s" "${key}" | wg set ${WG_INTERFACE} private-key /dev/stdin listen-port ${WG_PORT}'`);
 
@@ -130,7 +129,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/register", auth, (req, res) => {
-  const { node_id, pubkey, name, allowed_ips } = req.body;
+  const { node_id, pubkey, name, allowed_ips, public_ip, country_code, country_name } = req.body;
   if (!node_id || !pubkey || !name || !Array.isArray(allowed_ips)) {
     return res.status(400).json({ error: "missing fields" });
   }
@@ -144,11 +143,14 @@ app.post("/register", auth, (req, res) => {
     name,
     allowed_ips,
     mesh_ip: meshIp,
-    last_seen: Date.now()
+    last_seen: Date.now(),
+    public_ip: public_ip || "",
+    country_code: country_code || "",
+    country_name: country_name || "",
   });
 
   addWgPeer(pubkey, allIps);
-  console.log(`Node registered: ${name} (${node_id}) mesh_ip=${meshIp}`);
+  console.log(`Node registered: ${name} (${node_id}) mesh_ip=${meshIp} country=${country_code || "?"}`);
   res.json({ ok: true, mesh_ip: meshIp });
 });
 
@@ -161,7 +163,10 @@ app.get("/hub", auth, (req, res) => {
   res.json({
     relay_pubkey: relayKeys.publicKey,
     relay_endpoint: RELAY_ENDPOINT,
-    mesh_ip: node.mesh_ip
+    mesh_ip: node.mesh_ip,
+    public_ip: node.public_ip || "",
+    country_code: node.country_code || "",
+    country_name: node.country_name || "",
   });
 });
 
@@ -177,7 +182,10 @@ app.get("/peers", auth, (req, res) => {
       name: n.name,
       allowed_ips: n.allowed_ips,
       mesh_ip: n.mesh_ip,
-      last_seen: n.last_seen
+      last_seen: n.last_seen,
+      public_ip: n.public_ip || "",
+      country_code: n.country_code || "",
+      country_name: n.country_name || "",
     }));
   res.json(active);
 });
