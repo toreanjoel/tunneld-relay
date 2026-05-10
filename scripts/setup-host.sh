@@ -42,3 +42,18 @@ elif command -v iptables &> /dev/null; then
 else
     echo "Warning: no firewall tool found. Please manually open 4000/tcp and 51820/udp."
 fi
+
+echo "Enabling IP forwarding..."
+sysctl -w net.ipv4.ip_forward=1
+
+echo "Configuring forwarding for WireGuard mesh traffic..."
+if command -v ufw &> /dev/null; then
+    ufw default allow forward 2>/dev/null || true
+    echo "ufw default forward policy set to allow"
+elif command -v iptables &> /dev/null; then
+    iptables -C FORWARD -i wg0 -o wg0 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i wg0 -o wg0 -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -C FORWARD -i wg0 -o wg0 -m state --state NEW -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i wg0 -o wg0 -m state --state NEW -j ACCEPT
+    echo "iptables FORWARD rules added for wg0"
+fi
