@@ -129,7 +129,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/register", auth, (req, res) => {
-  const { node_id, pubkey, name, allowed_ips, public_ip, country_code, country_name } = req.body;
+  const { node_id, pubkey, name, allowed_ips, public_ip, country_code, country_name, latitude, longitude } = req.body;
   if (!node_id || !pubkey || !name || !Array.isArray(allowed_ips)) {
     return res.status(400).json({ error: "missing fields" });
   }
@@ -147,6 +147,8 @@ app.post("/register", auth, (req, res) => {
     public_ip: public_ip || "",
     country_code: country_code || "",
     country_name: country_name || "",
+    latitude: latitude != null ? latitude : null,
+    longitude: longitude != null ? longitude : null,
   });
 
   addWgPeer(pubkey, allIps);
@@ -167,6 +169,8 @@ app.get("/hub", auth, (req, res) => {
     public_ip: node.public_ip || "",
     country_code: node.country_code || "",
     country_name: node.country_name || "",
+    latitude: node.latitude != null ? node.latitude : null,
+    longitude: node.longitude != null ? node.longitude : null,
   });
 });
 
@@ -186,6 +190,8 @@ app.get("/peers", auth, (req, res) => {
       public_ip: n.public_ip || "",
       country_code: n.country_code || "",
       country_name: n.country_name || "",
+      latitude: n.latitude != null ? n.latitude : null,
+      longitude: n.longitude != null ? n.longitude : null,
     }));
   res.json(active);
 });
