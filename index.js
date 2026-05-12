@@ -69,7 +69,22 @@ function setupWg() {
   }
 }
 
+function setupForwarding() {
+  try {
+    exec("sysctl -w net.ipv4.ip_forward=1");
+    // Allow any existing return traffic from wg0 -> other interfaces
+    try {
+      exec(`iptables -C FORWARD -i ${WG_INTERFACE} -o ${WG_INTERFACE} -j ACCEPT`);
+    } catch (_) {
+      exec(`iptables -A FORWARD -i ${WG_INTERFACE} -o ${WG_INTERFACE} -j ACCEPT`);
+    }
+  } catch (e) {
+    console.error("Failed to setup forwarding:", e.stderr?.trim() || e.message);
+  }
+}
+
 setupWg();
+setupForwarding();
 
 const nodes = new Map();
 const meshIpCounter = { current: ipToInt(MESH_IP_START) };
