@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache wireguard-tools iproute2
+RUN apk add --no-cache wireguard-tools iproute2 iptables
 
 WORKDIR /app
 

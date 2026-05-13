@@ -11,9 +11,9 @@ const TOKEN = process.env.TOKEN;
 const PORT = parseInt(process.env.PORT || "4000", 10);
 const HEARTBEAT_TTL = parseInt(process.env.HEARTBEAT_TTL || "60", 10);
 const WG_INTERFACE = process.env.WG_INTERFACE || "wg0";
-const WG_ADDRESS = process.env.WG_ADDRESS || "10.0.0.1/8";
+const WG_ADDRESS = process.env.WG_ADDRESS || "10.200.0.1/16";
 const WG_PORT = parseInt(process.env.WG_PORT || "51820", 10);
-const MESH_IP_START = process.env.MESH_IP_START || "10.0.0.2";
+const MESH_IP_START = process.env.MESH_IP_START || "10.200.0.2";
 
 if (!RELAY_ENDPOINT || !TOKEN) {
   console.error("RELAY_ENDPOINT and TOKEN are required");
@@ -72,12 +72,23 @@ function setupWg() {
 function setupForwarding() {
   try {
     exec("sysctl -w net.ipv4.ip_forward=1");
-    // Allow any existing return traffic from wg0 -> other interfaces
+
+    // Insert at position 1 (top of chain) so UFW/Docker doesn't shadow it
     try {
       exec(`iptables -C FORWARD -i ${WG_INTERFACE} -o ${WG_INTERFACE} -j ACCEPT`);
     } catch (_) {
-      exec(`iptables -A FORWARD -i ${WG_INTERFACE} -o ${WG_INTERFACE} -j ACCEPT`);
+      exec(`iptables -I FORWARD 1 -i ${WG_INTERFACE} -o ${WG_INTERFACE} -j ACCEPT`);
+      console.log(`Inserted FORWARD rule: ${WG_INTERFACE} -> ${WG_INTERFACE}`);
     }
+
+    // Allow return traffic to wg0
+    try {
+      exec(`iptables -C FORWARD -i ${WG_INTERFACE} -m state --state ESTABLISHED,RELATED -j ACCEPT`);
+    } catch (_) {
+      exec(`iptables -I FORWARD 1 -i ${WG_INTERFACE} -m state --state ESTABLISHED,RELATED -j ACCEPT`);
+    }
+
+    console.log("IP forwarding + wg0 inter-peer forwarding enabled");
   } catch (e) {
     console.error("Failed to setup forwarding:", e.stderr?.trim() || e.message);
   }
