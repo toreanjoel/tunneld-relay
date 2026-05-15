@@ -73,7 +73,6 @@ function setupForwarding() {
   try {
     exec("sysctl -w net.ipv4.ip_forward=1");
 
-    // Insert at position 1 (top of chain) so UFW/Docker doesn't shadow it
     try {
       exec(`iptables -C FORWARD -i ${WG_INTERFACE} -o ${WG_INTERFACE} -j ACCEPT`);
     } catch (_) {
@@ -81,7 +80,6 @@ function setupForwarding() {
       console.log(`Inserted FORWARD rule: ${WG_INTERFACE} -> ${WG_INTERFACE}`);
     }
 
-    // Allow return traffic to wg0
     try {
       exec(`iptables -C FORWARD -i ${WG_INTERFACE} -m state --state ESTABLISHED,RELATED -j ACCEPT`);
     } catch (_) {
@@ -130,6 +128,9 @@ function addWgPeer(pubkey, allowedIps) {
   const ips = allowedIps.join(",");
   try {
     exec(`wg set ${WG_INTERFACE} peer ${pubkey} allowed-ips ${ips} persistent-keepalive 25`);
+    for (const ip of allowedIps) {
+      try { exec(`ip route replace ${ip} dev ${WG_INTERFACE}`); } catch (_) {}
+    }
     console.log(`Peer added to ${WG_INTERFACE}: ${pubkey} allowed-ips ${ips}`);
     return true;
   } catch (e) {
@@ -140,6 +141,13 @@ function addWgPeer(pubkey, allowedIps) {
 
 function removeWgPeer(pubkey) {
   try {
+    const node = nodes.get(pubkey);
+    if (node) {
+      const allIps = [node.mesh_ip + "/32", ...(node.allowed_ips || [])];
+      for (const ip of allIps) {
+        try { exec(`ip route del ${ip} dev ${WG_INTERFACE}`); } catch (_) {}
+      }
+    }
     exec(`wg set ${WG_INTERFACE} peer ${pubkey} remove`);
     console.log(`Peer removed from ${WG_INTERFACE}: ${pubkey}`);
     return true;
