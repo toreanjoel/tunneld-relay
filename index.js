@@ -14,6 +14,7 @@ const WG_INTERFACE = process.env.WG_INTERFACE || "wg0";
 const WG_ADDRESS = process.env.WG_ADDRESS || "10.200.0.1/16";
 const WG_PORT = parseInt(process.env.WG_PORT || "51820", 10);
 const MESH_IP_START = process.env.MESH_IP_START || "10.200.0.2";
+const DEVICE_IP_START = process.env.DEVICE_IP_START || "10.200.128.1";
 
 if (!RELAY_ENDPOINT || !TOKEN) {
   console.error("RELAY_ENDPOINT and TOKEN are required");
@@ -97,6 +98,7 @@ setupForwarding();
 
 const nodes = new Map();
 const meshIpCounter = { current: ipToInt(MESH_IP_START) };
+const deviceIpCounter = { current: ipToInt(DEVICE_IP_START) };
 
 function ipToInt(ip) {
   return ip.split(".").reduce((a, b) => (a << 8) | parseInt(b, 10), 0) >>> 0;
@@ -157,6 +159,65 @@ function removeWgPeer(pubkey) {
   }
 }
 
+function syncDeviceNat(node, allowedIps) {
+  const existingMap = node.device_map || {};
+  const newMap = {};
+
+  for (const realIp of allowedIps) {
+    const stripped = String(realIp).replace("/32", "");
+    let virtualIp = null;
+
+    for (const [v, r] of Object.entries(existingMap)) {
+      if (r === stripped) {
+        virtualIp = v;
+        break;
+      }
+    }
+
+    if (!virtualIp) {
+      virtualIp = intToIp(deviceIpCounter.current);
+      deviceIpCounter.current++;
+    }
+
+    newMap[virtualIp] = stripped;
+
+    const dnatRule = `-t nat -A PREROUTING -d ${virtualIp} -j DNAT --to-destination ${stripped}`;
+    const snatRule = `-t nat -A POSTROUTING -o ${WG_INTERFACE} -d ${stripped} -j SNAT --to-source ${WG_ADDRESS.split("/")[0]}`;
+
+    try {
+      exec(`iptables -C PREROUTING -t nat -d ${virtualIp} -j DNAT --to-destination ${stripped}`);
+    } catch (_) {
+      exec(`iptables -t nat -I PREROUTING 1 -d ${virtualIp} -j DNAT --to-destination ${stripped}`);
+    }
+
+    try {
+      exec(`iptables -C POSTROUTING -t nat -o ${WG_INTERFACE} -d ${stripped} -j SNAT --to-source ${WG_ADDRESS.split("/")[0]}`);
+    } catch (_) {
+      exec(`iptables -t nat -I POSTROUTING 1 -o ${WG_INTERFACE} -d ${stripped} -j SNAT --to-source ${WG_ADDRESS.split("/")[0]}`);
+    }
+  }
+
+  for (const [oldVirtual, oldReal] of Object.entries(existingMap)) {
+    if (!newMap[oldVirtual]) {
+      try { exec(`iptables -t nat -D PREROUTING -d ${oldVirtual} -j DNAT --to-destination ${oldReal}`); } catch (_) {}
+      try { exec(`iptables -t nat -D POSTROUTING -o ${WG_INTERFACE} -d ${oldReal} -j SNAT --to-source ${WG_ADDRESS.split("/")[0]}`); } catch (_) {}
+    }
+  }
+
+  return newMap;
+}
+
+function getVirtualAllowedIps(deviceMap) {
+  return Object.keys(deviceMap).map(v => v + "/32");
+}
+
+function getDeviceList(deviceMap) {
+  return Object.entries(deviceMap).map(([mapped_ip, real_ip]) => ({
+    mapped_ip,
+    real_ip,
+  }));
+}
+
 app.get("/health", (_req, res) => {
   const active = Array.from(nodes.values()).filter(n => Date.now() - n.last_seen < HEARTBEAT_TTL * 1000).length;
   res.json({ status: "ok", nodes: active });
@@ -169,9 +230,8 @@ app.post("/register", auth, (req, res) => {
   }
   const existing = Array.from(nodes.values()).find(n => n.node_id === node_id);
   const meshIp = existing ? existing.mesh_ip : assignMeshIp(node_id);
-  const allIps = [meshIp + "/32", ...allowed_ips];
 
-  nodes.set(pubkey, {
+  const nodeData = {
     node_id,
     pubkey,
     name,
@@ -183,10 +243,20 @@ app.post("/register", auth, (req, res) => {
     country_name: country_name || "",
     latitude: latitude != null ? latitude : null,
     longitude: longitude != null ? longitude : null,
-  });
+    device_map: existing ? (existing.device_map || {}) : {},
+  };
 
+  const deviceMap = syncDeviceNat(nodeData, allowed_ips);
+  nodeData.device_map = deviceMap;
+  nodeData.allowed_ips = allowed_ips;
+
+  const virtualIps = getVirtualAllowedIps(deviceMap);
+  const allIps = [meshIp + "/32", ...virtualIps];
+
+  nodes.set(pubkey, nodeData);
   addWgPeer(pubkey, allIps);
-  console.log(`Node registered: ${name} (${node_id}) mesh_ip=${meshIp} country=${country_code || "?"}`);
+
+  console.log(`Node registered: ${name} (${node_id}) mesh_ip=${meshIp} devices=${allowed_ips.length} country=${country_code || "?"}`);
   res.json({ ok: true, mesh_ip: meshIp });
 });
 
@@ -214,20 +284,48 @@ app.get("/peers", auth, (req, res) => {
   const active = Array.from(nodes.values())
     .filter(n => now - n.last_seen < HEARTBEAT_TTL * 1000)
     .filter(n => n.node_id !== excludeId)
-    .map(n => ({
-      node_id: n.node_id,
-      pubkey: n.pubkey,
-      name: n.name,
-      allowed_ips: n.allowed_ips,
-      mesh_ip: n.mesh_ip,
-      last_seen: n.last_seen,
-      public_ip: n.public_ip || "",
-      country_code: n.country_code || "",
-      country_name: n.country_name || "",
-      latitude: n.latitude != null ? n.latitude : null,
-      longitude: n.longitude != null ? n.longitude : null,
-    }));
+    .map(n => {
+      const deviceMap = n.device_map || {};
+      const virtualIps = getVirtualAllowedIps(deviceMap);
+      return {
+        node_id: n.node_id,
+        pubkey: n.pubkey,
+        name: n.name,
+        allowed_ips: virtualIps,
+        devices: getDeviceList(deviceMap),
+        mesh_ip: n.mesh_ip,
+        last_seen: n.last_seen,
+        public_ip: n.public_ip || "",
+        country_code: n.country_code || "",
+        country_name: n.country_name || "",
+        latitude: n.latitude != null ? n.latitude : null,
+        longitude: n.longitude != null ? n.longitude : null,
+      };
+    });
   res.json(active);
+});
+
+const pendingWakeRequests = new Map();
+
+app.post("/wake", auth, (req, res) => {
+  const nodeId = req.headers["x-node-id"];
+  const { target_node_id, device_ip } = req.body;
+  if (!target_node_id || !device_ip) {
+    return res.status(400).json({ error: "missing target_node_id or device_ip" });
+  }
+
+  const targetNode = Array.from(nodes.values()).find(n => n.node_id === target_node_id);
+  if (!targetNode) {
+    return res.status(404).json({ error: "target node not found" });
+  }
+
+  if (!pendingWakeRequests.has(target_node_id)) {
+    pendingWakeRequests.set(target_node_id, []);
+  }
+  pendingWakeRequests.get(target_node_id).push(device_ip);
+
+  console.log(`Wake request: ${nodeId || "?"} wants to wake ${device_ip} on ${target_node_id}`);
+  res.json({ ok: true });
 });
 
 app.post("/heartbeat", auth, (req, res) => {
@@ -236,8 +334,12 @@ app.post("/heartbeat", auth, (req, res) => {
   const node = Array.from(nodes.values()).find(n => n.node_id === node_id);
   if (!node) return res.status(404).json({ error: "not found" });
   node.last_seen = Date.now();
-  console.log(`Heartbeat received: ${node.name} (${node_id})`);
-  res.json({ ok: true });
+
+  const wakeRequests = pendingWakeRequests.get(node_id) || [];
+  pendingWakeRequests.delete(node_id);
+
+  console.log(`Heartbeat received: ${node.name} (${node_id})${wakeRequests.length ? ` pending wake: ${wakeRequests.length}` : ""}`);
+  res.json({ ok: true, wake_requests: wakeRequests });
 });
 
 app.use((_req, res) => {
@@ -248,6 +350,12 @@ function expireNodes() {
   const now = Date.now();
   for (const [pubkey, node] of nodes) {
     if (now - node.last_seen >= HEARTBEAT_TTL * 1000) {
+      const deviceMap = node.device_map || {};
+      for (const [oldVirtual, oldReal] of Object.entries(deviceMap)) {
+        try { exec(`iptables -t nat -D PREROUTING -d ${oldVirtual} -j DNAT --to-destination ${oldReal}`); } catch (_) {}
+        try { exec(`iptables -t nat -D POSTROUTING -o ${WG_INTERFACE} -d ${oldReal} -j SNAT --to-source ${WG_ADDRESS.split("/")[0]}`); } catch (_) {}
+      }
+      pendingWakeRequests.delete(node.node_id);
       removeWgPeer(pubkey);
       nodes.delete(pubkey);
       console.log(`Node expired: ${node.name} (${node.node_id})`);
@@ -259,4 +367,5 @@ setInterval(expireNodes, 15000);
 
 app.listen(PORT, () => {
   console.log(`Coordinator API listening on port ${PORT}`);
+  console.log(`Device NAT pool starting at ${DEVICE_IP_START}`);
 });
