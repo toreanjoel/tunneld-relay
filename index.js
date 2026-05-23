@@ -251,7 +251,7 @@ app.post("/register", auth, (req, res) => {
   nodeData.allowed_ips = allowed_ips;
 
   const virtualIps = getVirtualAllowedIps(deviceMap);
-  const allIps = [meshIp + "/32", ...virtualIps];
+  const allIps = [meshIp + "/32", ...virtualIps, ...allowed_ips];
 
   nodes.set(pubkey, nodeData);
   addWgPeer(pubkey, allIps);
@@ -305,29 +305,6 @@ app.get("/peers", auth, (req, res) => {
   res.json(active);
 });
 
-const pendingWakeRequests = new Map();
-
-app.post("/wake", auth, (req, res) => {
-  const nodeId = req.headers["x-node-id"];
-  const { target_node_id, device_ip } = req.body;
-  if (!target_node_id || !device_ip) {
-    return res.status(400).json({ error: "missing target_node_id or device_ip" });
-  }
-
-  const targetNode = Array.from(nodes.values()).find(n => n.node_id === target_node_id);
-  if (!targetNode) {
-    return res.status(404).json({ error: "target node not found" });
-  }
-
-  if (!pendingWakeRequests.has(target_node_id)) {
-    pendingWakeRequests.set(target_node_id, []);
-  }
-  pendingWakeRequests.get(target_node_id).push(device_ip);
-
-  console.log(`Wake request: ${nodeId || "?"} wants to wake ${device_ip} on ${target_node_id}`);
-  res.json({ ok: true });
-});
-
 app.post("/heartbeat", auth, (req, res) => {
   const { node_id } = req.body;
   if (!node_id) return res.status(400).json({ error: "missing fields" });
@@ -335,11 +312,8 @@ app.post("/heartbeat", auth, (req, res) => {
   if (!node) return res.status(404).json({ error: "not found" });
   node.last_seen = Date.now();
 
-  const wakeRequests = pendingWakeRequests.get(node_id) || [];
-  pendingWakeRequests.delete(node_id);
-
-  console.log(`Heartbeat received: ${node.name} (${node_id})${wakeRequests.length ? ` pending wake: ${wakeRequests.length}` : ""}`);
-  res.json({ ok: true, wake_requests: wakeRequests });
+  console.log(`Heartbeat received: ${node.name} (${node_id})`);
+  res.json({ ok: true });
 });
 
 app.use((_req, res) => {
@@ -355,7 +329,6 @@ function expireNodes() {
         try { exec(`iptables -t nat -D PREROUTING -d ${oldVirtual} -j DNAT --to-destination ${oldReal}`); } catch (_) {}
         try { exec(`iptables -t nat -D POSTROUTING -o ${WG_INTERFACE} -d ${oldReal} -j SNAT --to-source ${WG_ADDRESS.split("/")[0]}`); } catch (_) {}
       }
-      pendingWakeRequests.delete(node.node_id);
       removeWgPeer(pubkey);
       nodes.delete(pubkey);
       console.log(`Node expired: ${node.name} (${node.node_id})`);
